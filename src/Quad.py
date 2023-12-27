@@ -1,6 +1,8 @@
 from typing import Callable
 import torch
 import numpy as np
+from scipy.interpolate import LinearNDInterpolator
+from src.utils import chebyshev_points
 
 
 class Quad1D:
@@ -51,12 +53,12 @@ class Cheby2D:
 
     def __init__(self, spatial_domain_max: float, n: int) -> None:
         # Returns the points, weights for integration over [-1, 1]
-        points = np.cos(np.pi / (n - 1) * np.arange(n))
         weights = np.ones(n) / n
         # points, weights = np.polynomial.chebyshev.chebgauss(n)
 
         weights = torch.flipud(spatial_domain_max * torch.from_numpy(weights))
-        points = torch.flipud(spatial_domain_max * torch.from_numpy(points))
+        points, _ = chebyshev_points(n)
+        points = spatial_domain_max * points
 
         # super().__init__(spatial_domain_max, points, weights, n)
         self.spatial_domain_max = spatial_domain_max
@@ -74,9 +76,9 @@ class Cheby2D:
         # Make a list of the interior points
         xx, yy = torch.meshgrid(points, torch.flipud(points), indexing="ij")
         pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
-        print("pts shape: ", pts.shape)
+        # print("pts shape: ", pts.shape)
         pts = pts.reshape(-1, 2)
-        print("pts shape: ", pts.shape)
+        # print("pts shape: ", pts.shape)
 
         # pts is like the 2D grid in column-rasterized format.
 
@@ -98,9 +100,6 @@ class Cheby2D:
         # Loop through the indices in column-rasterized form and fill in the ones from the interior.
         current_idx = 4 * n - 4
         nums = torch.arange(n**2)
-        # print(nums)
-        # idxes_lst = idxes.tolist()
-        # print(idxes_lst)
         for i in nums:
             if i not in idxes:
                 idxes[current_idx] = i
@@ -111,60 +110,35 @@ class Cheby2D:
         self.points_lst = pts[idxes]
         self.rasterized_pts_lst = pts
 
-    # def _make_2d_points_and_weights(
-    #     self, points: torch.Tensor, weights: torch.Tensor
-    # ) -> None:
-    #     n = points.shape[0]
-    #     # Make a list of the interior points
-    #     interior_x, interior_y = torch.meshgrid(points[1:-1], points[1:-1])
-    #     interior_pts = torch.concatenate(
-    #         (interior_x.unsqueeze(-1), interior_y.unsqueeze(-1)), axis=-1
-    #     ).reshape(-1, 2)
-    #     # Boundary points start in the SW corner of the square
-    #     # domain and go around counter clockwise
-    #     boundary_pts = torch.empty((4 * (self.n - 1), 2), dtype=torch.float32)
-    #     # S edge
-    #     boundary_pts[:n, 0] = points
-    #     boundary_pts[:n, 1] = points[0]
-    #     # E edge
-    #     boundary_pts[n : 2 * n, 0] = points[-1]
-    #     boundary_pts[n : 2 * n - 1, 1] = points[1:]
-    #     # N edge
-    #     boundary_pts[2 * n - 1 : 3 * n - 2, 0] = torch.flipud(points[:-1])
-    #     boundary_pts[2 * n - 1 : 3 * n - 2, 1] = points[-1]
-    #     # W edge
-    #     boundary_pts[3 * n - 2 :, 0] = points[0]
-    #     boundary_pts[3 * n - 2 :, 1] = torch.flipud(points[1:-1])
-
-    #     self.boundary_pts_lst = boundary_pts
-    #     self.interior_pts_lst = interior_pts
-    #     self.points_lst = torch.concatenate((boundary_pts, interior_pts), axis=0)
-
-    #     # Do the same thing with the weights. First a list of the interior weights
-    #     interior_w_x, interior_w_y = torch.meshgrid(weights[1:-1], weights[1:-1])
-    #     interior_w = torch.concatenate((interior_w_x, interior_w_y), axis=-1).reshape(
-    #         -1, 2
-    #     )
-    #     boundary_w = torch.empty((4 * (self.n - 1), 2), dtype=torch.float32)
-    #     # S edge
-    #     boundary_w[:n, 0] = weights
-    #     boundary_w[:n, 1] = weights[0]
-    #     # E edge
-    #     boundary_w[n : 2 * n, 0] = weights[-1]
-    #     boundary_w[n : 2 * n - 1, 1] = weights[1:]
-    #     # N edge
-    #     boundary_w[2 * n - 1 : 3 * n - 2, 0] = torch.flipud(weights[:-1])
-    #     boundary_w[2 * n - 1 : 3 * n - 2, 1] = weights[-1]
-    #     # W edge
-    #     boundary_w[3 * n - 2 :, 0] = weights[0]
-    #     boundary_w[3 * n - 2 :, 1] = torch.flipud(weights[1:-1])
-    #     self.boundary_w_lst = boundary_w
-    #     self.interior_w_lst = interior_w
-    #     self.w_lst = torch.concatenate((boundary_w, interior_w), axis=0)
-
     def eval_func(self, f: Callable[[torch.Tensor], torch.Tensor]) -> float:
         evals = f(self.points_lst)
         return self.eval_tensor(evals)
 
     def eval_tensor(self, evals: torch.Tensor) -> float:
         return torch.dot(evals, self.w_lst)
+
+    def interp_to_2d_points(
+        self, ref_points: torch.Tensor, ref_vals: torch.Tensor
+    ) -> torch.Tensor:
+        """This function uses scipy's linear 2D interpolation to interpolate from <ref_points> to the 2d chebyshev points.
+
+        TOOD: I think this operation can be written as a linear operator in pure pytorch.
+
+        Args:
+            ref_points (torch.Tensor): The points that the function is evaluated on. Has shape (N,2)
+            ref_vals (torch.Tensor): Function evaluations. Has shape (N,)
+
+        Returns:
+            torch.Tensor: Has shape (self.n ** 2)
+        """
+        points_np = ref_points.numpy()
+        vals_np = ref_vals.numpy()
+
+        interp_obj = LinearNDInterpolator(points_np, vals_np)
+
+        X, Y = torch.meshgrid(
+            self.points_1d, torch.flipud(self.points_1d), indexing="ij"
+        )
+
+        out = interp_obj(X.numpy(), Y.numpy())
+        return torch.from_numpy(out).reshape(-1)

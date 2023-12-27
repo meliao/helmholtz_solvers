@@ -92,6 +92,49 @@ class Test_Cheby2D:
 
         assert idxes.sum() == 0.5 * (n_sq - 1) * n_sq
 
+    def test_3(self) -> None:
+        """Make sure the interpolation method runs without error and returns correct size"""
+        d = 1.0
+        n = 10
+        n_2 = 12
+
+        x = Cheby2D(d, n)
+
+        p = torch.linspace(-1, 1, n_2)
+
+        xx, yy = torch.meshgrid(p, torch.flipud(p), indexing="ij")
+        pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
+        pts = pts.reshape(-1, 2)
+
+        vals = 2 * pts[:, 0] - 3 * pts[:, 1] + 0.4
+
+        o = x.interp_to_2d_points(pts, vals)
+
+        assert o.shape == (n**2,)
+
+    def test_4(self) -> None:
+        """Tests the interpolation method on the affine function f(x,y) = 2 x - 3y + 0.4"""
+        d = 1.0
+        n = 10
+        n_2 = 12
+
+        x = Cheby2D(d, n)
+
+        p = torch.linspace(-1, 1, n_2)
+
+        xx, yy = torch.meshgrid(p, torch.flipud(p), indexing="ij")
+        pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
+        pts = pts.reshape(-1, 2)
+
+        vals = 2 * pts[:, 0] - 3 * pts[:, 1] + 0.4
+        expected_o = (
+            2 * x.rasterized_pts_lst[:, 0] - 3 * x.rasterized_pts_lst[:, 1] + 0.4
+        )
+
+        o = x.interp_to_2d_points(pts, vals)
+
+        check_arrays_close(expected_o.numpy(), o.numpy())
+
 
 if __name__ == "__main__":
     pytest.main()
