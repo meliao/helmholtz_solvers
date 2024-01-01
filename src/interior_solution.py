@@ -25,7 +25,7 @@ class LeafNode:
         self.q = q
 
         self.gauss_quad_obj = GaussLegendre1D(half_side_len, n_gauss_pts)
-        self.cheby_quad_obj = Cheby2D(half_side_len, n)
+        self.cheby_quad_obj = Cheby2D(half_side_len, self.n_cheb_pts)
 
         self.D = (
             1
@@ -34,12 +34,12 @@ class LeafNode:
         )
 
         # Differentiation wrt x
-        self.D_x = torch.kron(self.D, torch.eye(n))
+        self.D_x = torch.kron(self.D, torch.eye(self.n_cheb_pts))
         self.D_x = self.D_x[self.cheby_quad_obj.idxes]
         self.D_x = self.D_x[:, self.cheby_quad_obj.idxes]
 
         # Differentiation wrt y
-        self.D_y = torch.kron(torch.eye(n), self.D)
+        self.D_y = torch.kron(torch.eye(self.n_cheb_pts), self.D)
         self.D_y = self.D_y[self.cheby_quad_obj.idxes]
         self.D_y = self.D_y[:, self.cheby_quad_obj.idxes]
 
@@ -89,13 +89,13 @@ class LeafNode:
         self.P_0 = lagrange_interpolation_matrix(
             self.gauss_quad_obj.points, self.cheby_quad_obj.points_1d
         )[:-1]
-        self.I_P_0 = torch.kron(torch.eye(4), self.P_0)
+        self.I_P_0 = torch.kron(torch.eye(4), self.P_0).to(torch.cfloat)
 
         # Interpolate from Cheby to Gauss
         self.Q = lagrange_interpolation_matrix(
             self.cheby_quad_obj.points_1d, self.gauss_quad_obj.points
         )
-        self.I_Q = torch.kron(torch.eye(4), self.Q)
+        self.I_Q = torch.kron(torch.eye(4), self.Q).to(torch.cfloat)
 
         # G maps the solution u to outgoing impedance data
         self.G = torch.empty(
@@ -111,17 +111,89 @@ class LeafNode:
         self.G[3 * self.n_cheb_pts : 4 * self.n_cheb_pts] = (
             -1 * self.D_x[3 * self.n_cheb_pts - 3 : 4 * self.n_cheb_pts - 3]
         )
+        G_diag_pre = self.G.diagonal()
+        G_diag_post = G_diag_pre - 1j * eta
+        self.G.diagonal().copy_(G_diag_post)
+
+        self.X = None
+        self.R = None
 
     def solve(self) -> None:
         """Solves the linear system BX = [I; 0] for X. The RHS has size (4 * self.n_cheb_bts - 4, self.n_cheb_pts ** 2) Stores the solution in self.X"""
+        n_cheb_bdry = 4 * self.n_cheb_pts - 4
+        RHS = torch.zeros((self.n_cheb_pts**2, n_cheb_bdry), dtype=torch.cfloat)
 
-        RHS = torch.zeros(
-            (4 * self.n_cheb_pts - 4, self.n_cheb_pts**2), dtype=torch.cfloat
-        )
+        RHS[:n_cheb_bdry, :n_cheb_bdry] = torch.eye(n_cheb_bdry)
+        self.X = torch.linalg.solve(self.B, RHS)
 
-        X = torch.linalg.solve(self.B, RHS)
+    def get_R(self) -> torch.Tensor:
+        """Computes the solution R = I_Q @ G @ Y. This is from the end of section 2.3 in GMB15
+
+        Output has shape (4 * self.n_gauss_pts, 4 * n_cheb_pts - 4)"""
+
+        if self.R is None:
+            if self.X is None:
+                self.solve()
+            Y = self.X @ self.I_P_0
+            # print(Y.shape)
+            a = self.G @ Y
+            # print(a.shape)
+            self.R = self.I_Q @ a
+        return self.R
 
 
 class Merge:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, node_a: LeafNode, node_b: LeafNode, a_bdry_idx: int) -> None:
+        self.node_a = node_a
+        self.node_b = node_b
+
+        # These indices are 0 for South edge, 1 for East edge, and continue on counterclockwise around the rectangular domain.
+        self.a_bdry_idx = a_bdry_idx
+        self.b_bdry_idx = (a_bdry_idx + 2) % 4
+
+        idxes = torch.arange(4 * self.node_a.n_gauss_pts)
+        self.a_shared_bool = torch.logical_and(
+            idxes >= self.a_bdry_idx * self.node_a.n_gauss_pts,
+            idxes < (self.a_bdry_idx + 1) * self.node_a.n_gauss_pts,
+        )
+        self.b_shared_bool = torch.logical_and(
+            idxes >= self.b_bdry_idx * self.node_b.n_gauss_pts,
+            idxes < (self.b_bdry_idx + 1) * self.node_b.n_gauss_pts,
+        )
+
+        self.R_a = self.node_a.get_R()
+        self.R_b = self.node_b.get_R()
+
+        self.R_a_shared = self.R_a[self.a_shared_bool, self.a_shared_bool]
+
+        self.R_b_shared = self.R_b[self.b_shared_bool, self.b_shared_bool]
+
+        # This W will be filled with a matrix inverse in the self._get_W() routine.
+        self.W = None
+
+    def _get_W(self) -> None:
+        """Fills self.W with the matrix described in section 2.4 of GMB15"""
+
+        self.W = torch.linalg.inv(
+            torch.eye(self.node_a.n_gauss_pts) - self.R_b_shared @ self.R_a_shared,
+        )
+
+    def compute_merge(self) -> None:
+        if self.W is None:
+            self._get_W()
+
+        # Need to precompute W R^b_shared R^a_31
+        R_a_31 = self.R_a[self.a_shared_bool]
+        R_a_31 = R_a_31[:, ~self.a_shared_bool]
+        print("Merge.compute_merge: R_a_31 shape:", R_a_31.shape)
+
+        p_1 = self.W @ self.R_b_shared @ R_a_31
+
+        # Need to precompute W R^b_32
+        R_b_32 = self.R_b[self.b_shared_bool]
+        R_b_32 = R_b_32[:, ~self.b_shared_bool]
+
+        p_2 = self.W @ R_b_32
+
+        # Fill in the operator on the LHS of eqn 2.16 in GBM15
+        R = torch.empty((6 * self.node_a.n_gauss_pts, 6 * self.node_b.n_gauss_pts))

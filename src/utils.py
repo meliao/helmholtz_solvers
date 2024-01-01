@@ -105,18 +105,6 @@ def chebyshev_points(n: int) -> torch.Tensor:
     return torch.cos(angles), angles
 
 
-a = """
-    Generate a matrix for Lagrange polynomial interpolation from points x to points y.
-
-    Parameters:
-    - x: Tensor containing the x-coordinates of the interpolation points
-    - y: Tensor containing the y-coordinates of the interpolation points
-
-    Returns:
-    - lagrange_matrix: Matrix for Lagrange polynomial interpolation
-    """
-
-
 def lagrange_interpolation_matrix(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     """Generates a Lagrange 1D polynomial interpolation matrix, which interpolates from the points in x to the points in y
 
@@ -141,3 +129,21 @@ def lagrange_interpolation_matrix(x: torch.Tensor, y: torch.Tensor) -> torch.Ten
             lagrange_matrix[j, i] = numerator / denominator
 
     return lagrange_matrix
+
+
+def points_to_2d_lst_of_points(x: torch.Tensor) -> torch.Tensor:
+    """Given a set of n points <x> which discretizes a 1-D interval, this function
+    returns an array with shape (n**2, 2), which discretizes a 2-D area by
+    taking the Cartesian product of <x> with itself, and then flattening the
+    resulting 2-D grid in a column-rasterized way.
+
+    Args:
+        x (torch.Tensor): Has shape (n,)
+
+    Returns:
+        torch.Tensor: Has shape (n**2, 2)
+    """
+    xx, yy = torch.meshgrid(x, torch.flipud(x), indexing="ij")
+    pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
+    pts = pts.reshape(-1, 2)
+    return pts
