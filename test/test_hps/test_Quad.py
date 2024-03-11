@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 
-from src.Quad import Quad1D, GaussLegendre1D, Cheby2D
+from src.hps.Quad import Quad1D, GaussLegendre1D, Cheby2D
 from src.test_utils import check_scalars_close, check_arrays_close
 
 

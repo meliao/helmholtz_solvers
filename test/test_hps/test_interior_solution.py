@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 
-from src.interior_solution import LeafNode, Merge
+from src.hps.interior_solution import LeafNode, Merge
 from src.test_utils import (
     check_arrays_close,
     check_no_nan_in_array,

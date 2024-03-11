@@ -1,6 +1,6 @@
 import torch
 
-from src.Quad import GaussLegendre1D, Cheby2D
+from src.hps.Quad import GaussLegendre1D, Cheby2D
 from src.utils import differentiation_matrix_1d, lagrange_interpolation_matrix
 
 
