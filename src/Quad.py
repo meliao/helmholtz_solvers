@@ -39,16 +39,18 @@ class GaussLegendre1D(Quad1D):
 
 
 class Cheby2D:
-    """This object represents the 2D quadrature of a leaf node specified in Section 2.3 of GBM15. It creates a 2-D Chebyshev quadrature of a square domain with half-side length <spatial_domain_max> using <n>^2 points.
+    """This object represents the 2D quadrature of a leaf node specified in Section 2.3 of GBM15.
+    It creates a 2-D Chebyshev quadrature of a square domain with half-side length <spatial_domain_max>
+    using <n>^2 points.
 
-    The special thing is the ordering of the points. Throughout this object's use, it is necessary the points are ordered in a certain way:
+    The special thing is the ordering of the points. Throughout this object's use, it is necessary the
+    points are ordered in a certain way:
      * First the 4(n-1) boundary points, starting in the SW corner and going counter-clockwise.
-     * Next all of the n^2 - 4(n-1) interior points. The ordering of these points is not important, as long as it's held consistent.
+     * Next all of the n^2 - 4(n-1) interior points. The ordering of these points is not important, as
+     long as it's held consistent.
 
-    The 1-D Chebyshev nodes are defined as x_i = spatial_domain_max * cos(pi * (i - 1) / (n - 1)). We store the list of 2-D Chebyshev points (in the above order) in self.points_lst.
-
-
-
+    The 1-D Chebyshev nodes are defined as x_i = spatial_domain_max * cos(pi * (i - 1) / (n - 1)). We store the list of
+    2-D Chebyshev points (in the above order) in self.points_lst.
     """
 
     def __init__(self, spatial_domain_max: float, n: int) -> None:

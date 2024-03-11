@@ -132,7 +132,10 @@ class LeafNode:
         self.R = None
 
     def solve(self) -> None:
-        """Solves the linear system BX = [I; 0] for X. The RHS has size (4 * self.n_cheb_bts - 4, self.n_cheb_pts ** 2) Stores the solution in self.X"""
+        """Solves the linear system BX = [I; 0] for X. The RHS has size
+        (4 * self.n_cheb_bts - 4, self.n_cheb_pts ** 2)
+        Stores the solution in self.X
+        """
         n_cheb_bdry = 4 * self.n_cheb_pts - 4
         RHS = torch.zeros((self.n_cheb_pts**2, n_cheb_bdry), dtype=torch.cfloat)
 

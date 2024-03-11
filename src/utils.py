@@ -15,7 +15,7 @@ def differentiation_matrix_1d(
         torch.Tensor: Has shape (p,p)
     """
     p = points.shape[0]
-    print(p)
+    # print(p)
 
     # Here's the code from the MATLAB recipe book
     # c = [2; ones(N-1,1); 2].*(-1).^(0:N)';
@@ -147,3 +147,28 @@ def points_to_2d_lst_of_points(x: torch.Tensor) -> torch.Tensor:
     pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
     pts = pts.reshape(-1, 2)
     return pts
+
+
+def get_incident_plane_waves(
+    source_dirs: torch.Tensor, frequency: float, eval_pts: torch.Tensor
+) -> torch.Tensor:
+    """Returns the incident plane waves at the evaluation points <eval_pts> coming from the
+    source directions <source_dirs> at frequency <frequency>.
+
+    Args:
+        source_dirs (torch.Tensor): The source directions. Has shape (n_sources,)
+        frequency (float): The frequency of the plane waves.
+        eval_pts (torch.Tensor): The points at which to evaluate the plane waves. Has shape (n_eval_pts, 2).
+
+    Returns:
+        torch.Tensor: The incident plane waves at the evaluation points. Has shape (n_eval_pts, n_sources).
+    """
+    inc = torch.stack([torch.cos(source_dirs), torch.sin(source_dirs)]).to(
+        eval_pts.dtype
+    )
+    # print("_get_uin: inc shape: ", inc.shape)
+    inner_prods = eval_pts @ inc
+    # print("_get_uin: inner_prods shape: ", inner_prods.shape)
+
+    uin = torch.exp(1j * frequency * inner_prods)
+    return uin

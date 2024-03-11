@@ -7,6 +7,7 @@ from src.utils import (
     interp_matrix_to_Cheby,
     chebyshev_points,
     lagrange_interpolation_matrix,
+    get_incident_plane_waves,
 )
 from src.test_utils import check_arrays_close, check_scalars_close
 
@@ -192,6 +193,22 @@ class Test_lagrange_intepolation_matrix:
         print(cheb_interp - l_samples_cheb)
 
         check_arrays_close(cheb_interp.numpy(), l_samples_cheb.numpy())
+
+
+class Test_get_incident_plane_waves:
+    def test_0(self) -> None:
+        """Checks the function get_incident_plane_waves returns without error. Chooses equispaced source directions,
+        and then chooses random eval points."""
+
+        n_sources = 17
+        n_eval_pts = 100
+        frequency = 1.0
+
+        source_dirs = torch.linspace(0, 2 * np.pi, n_sources)
+        eval_pts = torch.rand(n_eval_pts, 2)
+
+        out = get_incident_plane_waves(source_dirs, frequency, eval_pts)
+        assert out.shape == (n_eval_pts, n_sources)
 
 
 if __name__ == "__main__":
