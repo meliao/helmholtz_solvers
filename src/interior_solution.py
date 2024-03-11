@@ -4,6 +4,19 @@ from src.Quad import GaussLegendre1D, Cheby2D
 from src.utils import differentiation_matrix_1d, lagrange_interpolation_matrix
 
 
+class Node:
+    def __init__(
+        self,
+        boundary_pts: torch.Tensor,
+        R: torch.Tensor = None,
+    ) -> None:
+        self.boundary_pts = boundary_pts
+        self.R = R
+
+    def get_R(self) -> torch.Tensor:
+        pass
+
+
 class LeafNode:
     def __init__(
         self,
