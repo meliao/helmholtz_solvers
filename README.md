@@ -7,14 +7,18 @@ Given a compactly-supported non-negative two-dimensional scattering potential $q
 the code solves this problem:
 
 $$\Delta u(x) + \omega^2 (1 - q(x)) u(x) = 0 \ \ \ \ x \in \mathbb{R}^2$$
+
 where the solution $u(x) = u_s(x) + u_i(x)$. The incident part of the wave field is a plane wave with known direction and frequency $\omega$. The scattered part of the wave field satisfies the Sommerfeld radiation condition: 
+
 $$ \frac{\partial u_s(x)}{\partial \| x \| } - i \omega u_s(x) = o\left( \| x \|^{-1/2} \right) \ \ \ \| x \| \to \infty $$
 
 
 ## Solver 1: Lippmann-Schwinger Equation (Stable)
 
 Discretizes and solves the following integral equation:
+
 $$ \sigma(x) - \omega^2(x) q(x) \int G_\omega(x, x') \sigma(x') dx' = \omega^2 u_i(x) q(x)$$
+
 where $G_\omega(x,x')$ is the Green's function for the homogeneous Helmholtz operator $\Delta + \omega^2$. The solution $u_s(x)$ to the above problem is given by $u_s(x) = \int G_\omega(x, x') \sigma(x') dx'$.
 
 The linear equations are discretized and implemented as sparse linear operators, and the system is inverted using an iterative solver GMRES or (optionally) BICGSTAB. 
