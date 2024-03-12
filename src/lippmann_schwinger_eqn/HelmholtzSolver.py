@@ -172,7 +172,7 @@ class HelmholtzSolverBase:
             gout = self._G_apply(x)
             term2 = (self.frequency**2) * q * gout
             # print("_matvec: term2 shape and device: ", term2.shape, term2.device)
-            y = x + term2.to(torch.cfloat)
+            y = x - term2.to(torch.cfloat)
             # print("_matvec: output device: ", y.device)
             # print("_matvec: output shape: ", y.shape)
             return y
@@ -186,7 +186,7 @@ class HelmholtzSolverBase:
         # X = A.to(self.device)
         A.device = self.device
         # print("_gmres_Helmholtz_inv: new A operator on device: ", A.device)
-        b = -(self.frequency**2) * q * uin.permute(1, 0)
+        b = (self.frequency**2) * q * uin.permute(1, 0)
         b = b.to(torch.cfloat)
 
         sigma, out_info = cola.algorithms.gmres(A, b)
@@ -228,7 +228,7 @@ class HelmholtzSolverBase:
             gout = self._G_apply(x)
             term2 = (self.frequency**2) * q * gout
             # print("_matvec: term2 shape and device: ", term2.shape, term2.device)
-            y = x + term2.to(torch.cfloat)
+            y = x - term2.to(torch.cfloat)
             # y = x + term2
             # print("_matvec: output device: ", y.device)
             # print("_matvec: output shape: ", y.shape)
@@ -243,7 +243,7 @@ class HelmholtzSolverBase:
         #     return x / diag_vec
 
         # print("_gmres_Helmholtz_inv: new A operator on device: ", A.device)
-        b = -(self.frequency**2) * q * uin.permute(1, 0)
+        b = (self.frequency**2) * q * uin.permute(1, 0)
         b = b.to(torch.cfloat)
         # print("_bicgstab_Helmholtz_inv: b shape", b.shape)
 
