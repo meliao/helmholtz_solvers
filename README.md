@@ -3,7 +3,7 @@ Pytorch implementations of high-resolution solvers for forward scattering proble
 
 ## PDE Problem
 
-Given a compactly-supported non-negative two-dimensional scattering potential $q(x)$,
+Given a compactly-supported two-dimensional scattering potential $q(x)$,
 the code solves this problem:
 
 $$\Delta u(x) + \omega^2 (1 - q(x)) u(x) = 0 \ \ \ \ x \in \mathbb{R}^2$$
