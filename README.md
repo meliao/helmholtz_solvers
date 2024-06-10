@@ -58,8 +58,8 @@ These are the papers I've read about the HPS method:
  - [x] Test code to interpolate from equispaced to Chebyshev grid.
  - [x] Build the `LeafNode` object.
  - [x] Test the D_x and D_y operators by differentiating polynomials.
- - [ ] Test the `LeafNode` object by building a notebook and confirming that it produces acceptable local solutions to the scattering problem.
- - [ ] Build objects for merging `LeafNode`s 
+ - [x] Test the `LeafNode` object by building a notebook and confirming that it produces acceptable local solutions to the scattering problem.
+ - [x] Build objects for merging `LeafNode`s 
  - [ ] Refactor `LeafNode` to have a parent class `Node`. Make `Merge` operate on two `Node`s.
 
 #### TODO: Optimization

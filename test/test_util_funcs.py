@@ -8,6 +8,8 @@ from src.utils import (
     chebyshev_points,
     lagrange_interpolation_matrix,
     get_incident_plane_waves,
+    lst_of_points_to_meshgrid,
+    points_to_2d_lst_of_points,
 )
 from src.test_utils import check_arrays_close, check_scalars_close
 
@@ -209,6 +211,25 @@ class Test_get_incident_plane_waves:
 
         out = get_incident_plane_waves(source_dirs, frequency, eval_pts)
         assert out.shape == (n_eval_pts, n_sources)
+
+
+class Test_lst_of_points_to_meshgrid:
+    def test_0(self) -> None:
+        """Checks the function returns without error"""
+        n = 5
+        x = torch.rand(n**2, 2)
+        xx, yy = lst_of_points_to_meshgrid(x)
+        assert xx.shape == (n, n)
+        assert yy.shape == (n, n)
+
+    def test_1(self) -> None:
+
+        x = np.linspace(0, 1, 4)
+        X, Y = np.meshgrid(x, np.flipud(x), indexing="ij")
+        pts_lst = points_to_2d_lst_of_points(torch.from_numpy(x))
+        xx, yy = lst_of_points_to_meshgrid(pts_lst)
+        check_arrays_close(xx.numpy(), X)
+        check_arrays_close(yy.numpy(), Y)
 
 
 if __name__ == "__main__":

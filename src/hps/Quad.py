@@ -2,7 +2,7 @@ from typing import Callable
 import torch
 import numpy as np
 from scipy.interpolate import LinearNDInterpolator
-from src.utils import chebyshev_points
+from src.utils import chebyshev_points, lst_of_points_to_meshgrid
 
 
 class Quad1D:
@@ -49,11 +49,21 @@ class Cheby2D:
      * Next all of the n^2 - 4(n-1) interior points. The ordering of these points is not important, as
      long as it's held consistent.
 
+    We are thinking about the square leaf box with upper-left corner at
+    (center_x - spatial_domain_max, center_y + spatial_domain_max) and lower-right corner
+    (center_x + spatial_domain_max, center_y - spatial_domain_max).
+
     The 1-D Chebyshev nodes are defined as x_i = spatial_domain_max * cos(pi * (i - 1) / (n - 1)). We store the list of
     2-D Chebyshev points (in the above order) in self.points_lst.
     """
 
-    def __init__(self, spatial_domain_max: float, n: int) -> None:
+    def __init__(
+        self,
+        spatial_domain_max: float,
+        n: int,
+        center_x: float = 0.0,
+        center_y: float = 0.0,
+    ) -> None:
         # Returns the points, weights for integration over [-1, 1]
         weights = np.ones(n) / n
         # points, weights = np.polynomial.chebyshev.chebgauss(n)
@@ -63,13 +73,15 @@ class Cheby2D:
         points = spatial_domain_max * points
 
         # super().__init__(spatial_domain_max, points, weights, n)
+        self.center_x = center_x
+        self.center_y = center_y
         self.spatial_domain_max = spatial_domain_max
         self.points_1d = points
         # print(self.points_1d)
         self.weights_1d = weights
         self.n = n
 
-        self._make_2d_points_and_weights(points, weights)
+        self._make_2d_points_and_weights(self.points_1d, weights)
 
     def _make_2d_points_and_weights(
         self, points: torch.Tensor, weights: torch.Tensor
@@ -77,6 +89,8 @@ class Cheby2D:
         n = points.shape[0]
         # Make a list of the interior points
         xx, yy = torch.meshgrid(points, torch.flipud(points), indexing="ij")
+        xx = self.center_x + xx
+        yy = self.center_y + yy
         pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
         # print("pts shape: ", pts.shape)
         pts = pts.reshape(-1, 2)
@@ -144,3 +158,28 @@ class Cheby2D:
 
         out = interp_obj(X.numpy(), Y.numpy())
         return torch.from_numpy(out).reshape(-1)
+
+    def interp_from_2d_points(
+        self, ref_points: torch.Tensor, ref_vals: torch.Tensor
+    ) -> torch.Tensor:
+        """This function uses scipy's linear 2D interpolation to interpolate from the 2d chebyshev points to <ref_points>.
+
+        TOOD: I think this operation can be written as a linear operator in pure pytorch.
+
+        Args:
+            ref_points (torch.Tensor): The points that we want the function evaluated on. Has shape (N_ref,2)
+            ref_vals (torch.Tensor): Function evaluations on the 2D chebyshev grid stored at
+                                        self.points_lst. Has shape (N,)
+
+        Returns:
+            torch.Tensor: Has shape (N_ref,)
+        """
+
+        points_np = self.points_lst.numpy()
+        vals_np = ref_vals.numpy()
+
+        interp_obj = LinearNDInterpolator(points_np, vals_np)
+
+        xx, yy = lst_of_points_to_meshgrid(ref_points)
+        out = interp_obj(xx.numpy(), yy.numpy())
+        return torch.from_numpy(out)

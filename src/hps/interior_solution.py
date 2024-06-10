@@ -1,5 +1,6 @@
+from typing import Tuple
 import torch
-
+import math
 from src.hps.Quad import GaussLegendre1D, Cheby2D
 from src.utils import differentiation_matrix_1d, lagrange_interpolation_matrix
 
@@ -33,32 +34,40 @@ class LeafNode:
         self.n_cheb_pts = n_cheb_pts
         self.n_gauss_pts = n_gauss_pts
         self.upper_left_pos = (upper_left_x, upper_left_y)
+        center_x = upper_left_x + half_side_len
+        center_y = upper_left_y - half_side_len
         self.omega = omega
         eta = omega
         self.q = q
 
         self.gauss_quad_obj = GaussLegendre1D(half_side_len, n_gauss_pts)
-        self.cheby_quad_obj = Cheby2D(half_side_len, self.n_cheb_pts)
-
-        self.D = (
-            1
-            / self.half_side_len
-            * differentiation_matrix_1d(self.cheby_quad_obj.points_1d)
+        self.cheby_quad_obj = Cheby2D(
+            half_side_len, self.n_cheb_pts, center_x, center_y
         )
+
+        # norm_factor = 1 / (math.sqrt(self.half_side_len))
+        norm_factor = 1
+        print("norm_factor: ", norm_factor)
+        self.D = differentiation_matrix_1d(self.cheby_quad_obj.points_1d) * norm_factor
 
         # Differentiation wrt x
         self.D_x = torch.kron(self.D, torch.eye(self.n_cheb_pts))
         self.D_x = self.D_x[self.cheby_quad_obj.idxes]
         self.D_x = self.D_x[:, self.cheby_quad_obj.idxes]
+        self.D_x_single = self.D_x
 
         # Differentiation wrt y
         self.D_y = torch.kron(torch.eye(self.n_cheb_pts), self.D)
         self.D_y = self.D_y[self.cheby_quad_obj.idxes]
         self.D_y = self.D_y[:, self.cheby_quad_obj.idxes]
+        self.D_y_single = self.D_y
 
         # Really we want the second derivatives wrt x and y
         self.D_x = self.D_x @ self.D_x
         self.D_y = self.D_y @ self.D_y
+
+        # self.D_x = norm_factor * self.D_x
+        # self.D_y = norm_factor * self.D_y
 
         # This is the diagonal of the omega^2(1 - q(x)) operator
         self.diag_ordered = self.omega**2 * (
@@ -131,6 +140,16 @@ class LeafNode:
         self.X = None
         self.R = None
 
+        self._dirs = ["S", "E", "N", "W"]
+
+        # This ordering comes from the first sentence of section 2.3 in GMB15
+        self.R_indices = {
+            "S": torch.arange(self.n_gauss_pts),
+            "E": torch.arange(self.n_gauss_pts, 2 * self.n_gauss_pts),
+            "N": torch.arange(2 * self.n_gauss_pts, 3 * self.n_gauss_pts),
+            "W": torch.arange(3 * self.n_gauss_pts, 4 * self.n_gauss_pts),
+        }
+
     def solve(self) -> None:
         """Solves the linear system BX = [I; 0] for X. The RHS has size
         (4 * self.n_cheb_bts - 4, self.n_cheb_pts ** 2)
@@ -143,9 +162,11 @@ class LeafNode:
         self.X = torch.linalg.solve(self.B, RHS)
 
     def get_R(self) -> torch.Tensor:
-        """Computes the solution R = I_Q @ G @ Y. This is from the end of section 2.3 in GMB15
+        """Computes the solution R = I_Q @ G @ Y. Conceptually, R maps the incoming impedance data
+        to the outgoing impedance data. In the paper, this is written as g = Rf.
+        This is from the end of section 2.3 in GMB15.
 
-        Output has shape (4 * self.n_gauss_pts, 4 * n_cheb_pts - 4)"""
+        Output has shape (4 * self.n_gauss_pts, 4 * n_cheb_pts)"""
 
         if self.R is None:
             if self.X is None:
@@ -157,32 +178,66 @@ class LeafNode:
             self.R = self.I_Q @ a
         return self.R
 
+    def get_R_submatrices(self, shared_side_key: str) -> torch.Tensor:
+        """Returns four submatrices of the R matrix. The R matrix maps incoming impedance data to outgoing impedance data.
+        To describe the submatrices, think about the indices tabulating the boundary points of two adjacent nodes, which we wish
+        to join. The indices start on the South edge and go around counter-clockwise.
+        The submatrices are:
+
+        R = (R_intint, R_intext
+             R_extint, R_extext)
+
+        The shared_side_key indicates which side of the node is shared with the adjacent node, and therefore which rows and cols are
+        included in the int/ext submatrices.
+        """
+        assert shared_side_key in self._dirs, f"idx_rows must be in {self._dirs}"
+
+        if self.R is None:
+            self.get_R()
+
+        int_idxes = self.R_indices[shared_side_key]
+        ext_indices = torch.cat(
+            [self.R_indices[dir] for dir in self._dirs if dir != shared_side_key]
+        )
+
+        R_intint = self.R[int_idxes][:, int_idxes]
+        R_intext = self.R[int_idxes][:, ext_indices]
+        R_extint = self.R[ext_indices][:, int_idxes]
+        R_extext = self.R[ext_indices][:, ext_indices]
+
+        return R_intint, R_intext, R_extint, R_extext
+
+
+def _get_opposite_boundary_str(bdry_str: str) -> str:
+    """Returns the string for the boundary opposite to bdry_str"""
+    bdry_dict = {"N": "S", "E": "W", "S": "N", "W": "E"}
+    return bdry_dict[bdry_str]
+
 
 class Merge:
-    def __init__(self, node_a: LeafNode, node_b: LeafNode, a_bdry_idx: int) -> None:
+
+    def __init__(self, node_a: LeafNode, node_b: LeafNode, a_bdry_str: str) -> None:
         self.node_a = node_a
         self.node_b = node_b
 
         # These indices are 0 for South edge, 1 for East edge, and continue on counterclockwise around the rectangular domain.
-        self.a_bdry_idx = a_bdry_idx
-        self.b_bdry_idx = (a_bdry_idx + 2) % 4
+        self.a_bdry_str = a_bdry_str
+        self.b_bdry_str = _get_opposite_boundary_str(a_bdry_str)
 
         idxes = torch.arange(4 * self.node_a.n_gauss_pts)
-        self.a_shared_bool = torch.logical_and(
-            idxes >= self.a_bdry_idx * self.node_a.n_gauss_pts,
-            idxes < (self.a_bdry_idx + 1) * self.node_a.n_gauss_pts,
-        )
-        self.b_shared_bool = torch.logical_and(
-            idxes >= self.b_bdry_idx * self.node_b.n_gauss_pts,
-            idxes < (self.b_bdry_idx + 1) * self.node_b.n_gauss_pts,
-        )
 
         self.R_a = self.node_a.get_R()
         self.R_b = self.node_b.get_R()
+        print("Merge.__init__: R_a shape:", self.R_a.shape)
+        print("Merge.__init__: R_b shape:", self.R_b.shape)
 
-        self.R_a_shared = self.R_a[self.a_shared_bool, self.a_shared_bool]
+        (self.R_a_33, self.R_a_31, self.R_a_13, self.R_a_11) = (
+            self.node_a.get_R_submatrices(self.a_bdry_str)
+        )
 
-        self.R_b_shared = self.R_b[self.b_shared_bool, self.b_shared_bool]
+        (self.R_b_33, self.R_b_32, self.R_b_23, self.R_b_22) = (
+            self.node_b.get_R_submatrices(self.b_bdry_str)
+        )
 
         # This W will be filled with a matrix inverse in the self._get_W() routine.
         self.W = None
@@ -190,26 +245,94 @@ class Merge:
     def _get_W(self) -> None:
         """Fills self.W with the matrix described in section 2.4 of GMB15"""
 
+        print("Merge._get_W: self.R_b_33 shape:", self.R_b_33.shape)
+        print("Merge._get_W: self.R_a_33 shape:", self.R_a_33.shape)
+        print("Merge._get_W: self.node_a.n_gauss_pts:", self.node_a.n_gauss_pts)
         self.W = torch.linalg.inv(
-            torch.eye(self.node_a.n_gauss_pts) - self.R_b_shared @ self.R_a_shared,
+            torch.eye(self.node_a.n_gauss_pts) - self.R_b_33 @ self.R_a_33,
         )
 
-    def compute_merge(self) -> None:
+    def compute_merge(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Computes the merge of the two nodes.
+        Returns R, S_a, and S_b.
+        R is the operator that maps incoming impedance data to outgoing impedance data on the merged node.
+        S_a maps incoming impedance data on the merged node to incoming impedance data on the shared edge in node a.
+        S_b maps incoming impedance data on the merged node to incoming impedance data on the shared edge in node b.
+
+        R has shape (6 * self.node_a.n_gauss_pts, 6 * self.node_b.n_gauss_pts)
+        S_a and S_b have shape (self.node_a.n_gauss_pts, 6 * self.node_a.n_gauss_pts)
+        """
         if self.W is None:
             self._get_W()
 
         # Need to precompute W R^b_shared R^a_31
-        R_a_31 = self.R_a[self.a_shared_bool]
-        R_a_31 = R_a_31[:, ~self.a_shared_bool]
-        print("Merge.compute_merge: R_a_31 shape:", R_a_31.shape)
+        # print("Merge.compute_merge: self.R_a_31 shape:", self.R_a_31.shape)
 
-        p_1 = self.W @ self.R_b_shared @ R_a_31
+        # print("Merge.compute_merge: self.W shape:", self.W.shape)
+        # print("Merge.compute_merge: self.R_a_31 shape:", self.R_a_31.shape)
+
+        p_1 = self.W @ self.R_b_33 @ self.R_a_31
 
         # Need to precompute W R^b_32
-        R_b_32 = self.R_b[self.b_shared_bool]
-        R_b_32 = R_b_32[:, ~self.b_shared_bool]
+        # R_b_32 = self.R_b[self.b_shared_bool]
+        # R_b_32 = R_b_32[:, ~self.b_shared_bool]
 
-        p_2 = self.W @ R_b_32
+        # R_b_23 = self.R_b[~self.b_shared_bool]
+        # R_b_23 = R_b_23[:, self.b_shared_bool]
+
+        p_2 = self.W @ self.R_b_32
 
         # Fill in the operator on the LHS of eqn 2.16 in GBM15
-        R = torch.empty((6 * self.node_a.n_gauss_pts, 6 * self.node_b.n_gauss_pts))
+        R = torch.empty(
+            (6 * self.node_a.n_gauss_pts, 6 * self.node_b.n_gauss_pts),
+            dtype=self.node_a.R.dtype,
+        )
+
+        print("Merge.compute_merge: R shape:", R.shape)
+        print("Merge.compute_merge: p_1 shape:", p_1.shape)
+        print("Merge.compute_merge: R_a_13 shape:", self.R_a_13.shape)
+
+        pre_1 = self.R_a_11 + self.R_a_13 @ p_1
+        R[: 3 * self.node_a.n_gauss_pts, : 3 * self.node_a.n_gauss_pts] = pre_1
+
+        pre_2 = -1 * self.R_a_13 @ p_2
+        R[: 3 * self.node_a.n_gauss_pts, 3 * self.node_a.n_gauss_pts :] = pre_2
+
+        pre_3a = self.R_a_31 + self.R_a_33 @ p_1
+        pre_3 = -1 * self.R_b_23 @ pre_3a
+        R[3 * self.node_a.n_gauss_pts :, : 3 * self.node_a.n_gauss_pts] = pre_3
+
+        pre_4 = self.R_b_22 + self.R_b_23 @ self.R_a_33 @ p_2
+        R[3 * self.node_a.n_gauss_pts :, 3 * self.node_a.n_gauss_pts :] = pre_4
+
+        # Fill in the S_a and S_b matrices
+        S_a = torch.empty(
+            (self.node_a.n_gauss_pts, 6 * self.node_a.n_gauss_pts),
+            dtype=self.node_a.R.dtype,
+        )
+        S_a[:, : 3 * self.node_a.n_gauss_pts] = p_1
+        S_a[:, 3 * self.node_a.n_gauss_pts :] = -1 * p_2
+
+        S_b = torch.empty(
+            (self.node_a.n_gauss_pts, 6 * self.node_a.n_gauss_pts),
+            dtype=self.node_a.R.dtype,
+        )
+        S_b[:, : 3 * self.node_a.n_gauss_pts] = -1 * pre_3a
+        S_b[:, 3 * self.node_a.n_gauss_pts :] = -1 * self.R_a_33 @ p_2
+
+        return R, S_a, S_b
+
+
+def build_interior_dtn_map(node: Node, eta: float) -> torch.Tensor:
+    """Builds the Dirichlet-to-Neumann map for a node.
+    It builds the DtN operator from the ItI operator,  which is called  R.
+    This uses equation 2.17 from GBM15.
+    """
+    R = node.get_R()
+    n_bdry_points = R.shape[0]
+    prefactor = 1j * eta * -1
+    I = torch.eye(n_bdry_points)
+    X = torch.linalg.solve(R - I)
+    DtN = prefactor * X @ (R + I)
+
+    return DtN

@@ -5,7 +5,7 @@ import numpy as np
 
 def differentiation_matrix_1d(
     points: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """Creates a 1-D Chebyshev differentiation matrix as described in (T00) Ch 6. Expects points are Chebyshev points on [-1, 1].
 
     Args:
@@ -147,6 +147,21 @@ def points_to_2d_lst_of_points(x: torch.Tensor) -> torch.Tensor:
     pts = torch.concatenate((xx.unsqueeze(-1), yy.unsqueeze(-1)), axis=-1)
     pts = pts.reshape(-1, 2)
     return pts
+
+
+def lst_of_points_to_meshgrid(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Given a list of n points which create a regular grid over a 2D plane,
+    this function returns a meshgrid of the points.
+
+    Args:
+        x (torch.Tensor): Has shape (n,2)
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Each tensor has shape (n,n).
+    """
+    s = int(np.sqrt(x.shape[0]))
+    xx = x[:, 0].reshape(s, s)
+    yy = x[:, 1].reshape(s, s)
+    return xx, yy
 
 
 def get_incident_plane_waves(

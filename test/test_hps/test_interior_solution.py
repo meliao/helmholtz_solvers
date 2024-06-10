@@ -97,9 +97,8 @@ class Test_LeafNode:
         print(f_y_pred)
         check_arrays_close(f_y_evals, f_y_pred)
 
-    @pytest.mark.skip()
     def test_2(self) -> None:
-        """"""
+        """Checks the self.R_indices are set correctly"""
 
         half_side_len = 1.0
         n = 12
@@ -121,6 +120,71 @@ class Test_LeafNode:
         leaf_obj = LeafNode(
             half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
         )
+
+        expected_indices = torch.arange(4 * n_gauss)
+        all_indices = torch.cat(
+            (
+                leaf_obj.R_indices["S"],
+                leaf_obj.R_indices["E"],
+                leaf_obj.R_indices["N"],
+                leaf_obj.R_indices["W"],
+            )
+        )
+        print("all_indices shape: ", all_indices.shape)
+        print("expected_indices shape: ", expected_indices.shape)
+
+        print("all_indices: ", all_indices)
+        print("expected_indices: ", expected_indices)
+
+        assert torch.all(all_indices == expected_indices)
+
+        dirs = ["N", "E", "S", "W"]
+
+        for i in dirs:
+            for j in dirs:
+                if i == j:
+                    continue
+                i_idxes = leaf_obj.R_indices[i]
+                j_idxes = leaf_obj.R_indices[j]
+
+                # Check that i_indices and j_indices are disjoint
+                combined = torch.cat((i_idxes, j_idxes))
+                uniques, counts = combined.unique(return_counts=True)
+                difference = uniques[counts == 1]
+                intersection = uniques[counts > 1]
+                assert difference.shape[0] == combined.shape[0]
+
+    def test_3(self) -> None:
+        """Checks that the get_R_submatrices() method returns the correct shapes."""
+
+        half_side_len = 1.0
+        n = 12
+        n_gauss = 13
+        m = 15
+        upper_left_x = -0.5
+        upper_left_y = -0.5
+        omega = 4.0
+
+        x = torch.linspace(upper_left_y, 2 * half_side_len + upper_left_y, m)
+        X, Y = torch.meshgrid(x, x, indexing="ij")
+
+        pts = torch.concatenate((X.unsqueeze(-1), Y.unsqueeze(-1)), axis=-1).reshape(
+            -1, 2
+        )
+
+        q = torch.randn(size=(m**2,))
+
+        leaf_obj = LeafNode(
+            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
+        )
+
+        for i in ["S", "E", "N", "W"]:
+            R_intint, R_intext, R_extint, R_extext = leaf_obj.get_R_submatrices(i)
+
+            assert R_intint.shape == (n_gauss, n_gauss)
+            assert R_intext.shape == (n_gauss, 3 * n_gauss)
+            assert R_extint.shape == (3 * n_gauss, n_gauss)
+            assert R_extext.shape == (3 * n_gauss, 3 * n_gauss)
 
 
 class Test_Merge:
@@ -144,11 +208,11 @@ class Test_Merge:
         leaf_obj = LeafNode(
             half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
         )
-        a_bdry_lst = [0, 1, 2, 3]
-        b_bdry_lst = [2, 3, 0, 1]
+        a_bdry_lst = ["S", "E", "N", "W"]
+        b_bdry_lst = ["N", "W", "S", "E"]
         for a, b in zip(a_bdry_lst, b_bdry_lst):
             merge_obj = Merge(leaf_obj, leaf_obj, a)
-            assert merge_obj.b_bdry_idx == b
+            assert merge_obj.b_bdry_str == b
 
     def test_1(self) -> None:
         """Tests the compute_merge() method returns without error"""
@@ -177,6 +241,8 @@ class Test_Merge:
             half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q_b, pts
         )
 
-        for i in range(4):
+        dirs = ["N", "E", "S", "W"]
+
+        for i in dirs:
             merge_obj = Merge(leaf_obj_a, leaf_obj_b, i)
             merge_obj.compute_merge()
