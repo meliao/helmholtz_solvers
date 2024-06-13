@@ -60,12 +60,27 @@ These are the papers I've read about the HPS method:
  - [x] Test the D_x and D_y operators by differentiating polynomials.
  - [x] Test the `LeafNode` object by building a notebook and confirming that it produces acceptable local solutions to the scattering problem.
  - [x] Build objects for merging `LeafNode`s 
- - [ ] Refactor `LeafNode` to have a parent class `Node`. Make `Merge` operate on two `Node`s.
+ - [ ] Read about BIE methods, single- and double-layer potetntials.
+ - [ ] Implement S, the single-layer potential from BGM15 eqn 3.2.
+ - [ ] Implement D, the double-layer potential from BGM15 eqn 3.2.
+ - [ ] Implement T_ext, the exterior DtN map.
+ - [ ] Implement the solve operation given T_int and T_ext. 
+ - [ ] Check that things look reasonable on small problem instances. 
+ - [ ] Refactor `LeafNode`, `Node`, and `Merge`
+      - [x] `Node` should have objects `BoundaryQuad`, `R`, `is_leaf_bool`, `S` (optionally, if not a Leaf).
+      - [x] `Node` should have methods `get_R_submatrices()`, 
+      - [ ] `Merge` should operate on two `Node` instances. It should have some method that returns a new `Node` instance.
+ - [ ] Make a `BoundaryQuad` object that has the following capabilities:
+      - [ ] Need a function for merging 2 such quadrature objects together.
+      - [x] Is able to give quadrature weights.
+      - [x] Handles the submatrix indexing that is currently handled by `LeafNode`.
+ - [ ] Write a function that builds a tree of nodes.
+ - [ ] Write a function that maps q to T_int.
 
 #### TODO: Optimization
  - [ ] Precompute an interpolation matrix from a regularly-spaced grid to a Chebyshev grid. The code in `Cheby2D.interp_to_2d_points()` relies on scipy and does not take advantage of any precomputation.
  - [ ] Factor the stuff in `LeafNode.__init__()` to be all pre-computed and have the diagonals of certain objects be updated given a new scattering object or frequency.
- - [ ] Optimize the lineaer system solve in `LeafNode.solve()`
+ - [ ] Optimize the linear system solve in `LeafNode.solve()`
  - [ ] There are multiple steps in `LeafNode` that require taking the Kronecker product between a dense matrix and 4x4 identity matrix. Can we accelerate applying these operators?
 
 

@@ -1,31 +1,69 @@
 from typing import Tuple
 import torch
 import math
-from src.hps.Quad import GaussLegendre1D, Cheby2D
+from src.hps.Quad import GaussLegendre1D, Cheby2D, BoundaryQuad
 from src.utils import differentiation_matrix_1d, lagrange_interpolation_matrix
 
 
 class Node:
     def __init__(
         self,
-        boundary_pts: torch.Tensor,
+        cheby_quad_interior: Cheby2D,
+        quad_bdry: BoundaryQuad,
+        is_leaf_bool: bool,
         R: torch.Tensor = None,
+        S: torch.Tensor = None,
     ) -> None:
-        self.boundary_pts = boundary_pts
+        self.cheby_quad_interior = cheby_quad_interior
+        self.quad_bdry = quad_bdry
+        self.is_leaf_bool = is_leaf_bool
         self.R = R
+        self.S = S
 
     def get_R(self) -> torch.Tensor:
-        pass
+        if self.R is None:
+            raise ValueError("R has not been computed yet.")
+        else:
+            return self.R
+
+    def get_R_submatrices(self, shared_side_key: str) -> torch.Tensor:
+        """Returns four submatrices of the R matrix. The R matrix maps incoming impedance data to outgoing impedance data.
+        To describe the submatrices, think about the indices tabulating the boundary points of two adjacent nodes, which we wish
+        to join. The indices start on the South edge and go around counter-clockwise.
+        The submatrices are:
+
+        R = (R_intint, R_intext
+             R_extint, R_extext)
+
+        The shared_side_key indicates which side of the node is shared with the adjacent node, and therefore which rows and cols are
+        included in the int/ext submatrices.
+        """
+        # assert shared_side_key in self._dirs, f"idx_rows must be in {self._dirs}"
+
+        if self.R is None:
+            self.get_R()
+
+        int_idxes, ext_indices = self.quad_bdry.get_submatrix_indices(shared_side_key)
+        # int_idxes = self.R_indices[shared_side_key]
+        # ext_indices = torch.cat(
+        #     [self.R_indices[dir] for dir in self._dirs if dir != shared_side_key]
+        # )
+
+        R_intint = self.R[int_idxes][:, int_idxes]
+        R_intext = self.R[int_idxes][:, ext_indices]
+        R_extint = self.R[ext_indices][:, int_idxes]
+        R_extext = self.R[ext_indices][:, ext_indices]
+
+        return R_intint, R_intext, R_extint, R_extext
 
 
-class LeafNode:
+class LeafNode(Node):
     def __init__(
         self,
         half_side_len: float,
         n_cheb_pts: int,
         n_gauss_pts: int,
-        upper_left_x: float,
-        upper_left_y: float,
+        sw_corner: torch.Tensor,
         omega: float,
         q: torch.Tensor,
         sample_points: torch.Tensor,
@@ -33,33 +71,42 @@ class LeafNode:
         self.half_side_len = half_side_len
         self.n_cheb_pts = n_cheb_pts
         self.n_gauss_pts = n_gauss_pts
-        self.upper_left_pos = (upper_left_x, upper_left_y)
-        center_x = upper_left_x + half_side_len
-        center_y = upper_left_y - half_side_len
+
+        self.sw_corner = sw_corner
+        self.center = sw_corner + half_side_len
+        # self.upper_left_pos = (upper_left_x, upper_left_y)
+        # center_x = upper_left_x + half_side_len
+        # center_y = upper_left_y - half_side_len
         self.omega = omega
         eta = omega
         self.q = q
 
-        self.gauss_quad_obj = GaussLegendre1D(half_side_len, n_gauss_pts)
-        self.cheby_quad_obj = Cheby2D(
-            half_side_len, self.n_cheb_pts, center_x, center_y
+        # self.gauss_quad_obj = GaussLegendre1D(half_side_len, n_gauss_pts)
+        cheby_quad_obj = Cheby2D(
+            half_side_len, self.n_cheb_pts, self.center[0], self.center[1]
         )
+        boundary_quad_obj = BoundaryQuad.from_corner_and_half_side_len(
+            sw_corner, half_side_len, n_gauss_pts
+        )
+        super().__init__(cheby_quad_obj, boundary_quad_obj, is_leaf_bool=True)
 
         # norm_factor = 1 / (math.sqrt(self.half_side_len))
         norm_factor = 1
-        print("norm_factor: ", norm_factor)
-        self.D = differentiation_matrix_1d(self.cheby_quad_obj.points_1d) * norm_factor
+        # print("norm_factor: ", norm_factor)
+        self.D = (
+            differentiation_matrix_1d(self.cheby_quad_interior.points_1d) * norm_factor
+        )
 
         # Differentiation wrt x
         self.D_x = torch.kron(self.D, torch.eye(self.n_cheb_pts))
-        self.D_x = self.D_x[self.cheby_quad_obj.idxes]
-        self.D_x = self.D_x[:, self.cheby_quad_obj.idxes]
+        self.D_x = self.D_x[self.cheby_quad_interior.idxes]
+        self.D_x = self.D_x[:, self.cheby_quad_interior.idxes]
         self.D_x_single = self.D_x
 
         # Differentiation wrt y
         self.D_y = torch.kron(torch.eye(self.n_cheb_pts), self.D)
-        self.D_y = self.D_y[self.cheby_quad_obj.idxes]
-        self.D_y = self.D_y[:, self.cheby_quad_obj.idxes]
+        self.D_y = self.D_y[self.cheby_quad_interior.idxes]
+        self.D_y = self.D_y[:, self.cheby_quad_interior.idxes]
         self.D_y_single = self.D_y
 
         # Really we want the second derivatives wrt x and y
@@ -72,8 +119,8 @@ class LeafNode:
         # This is the diagonal of the omega^2(1 - q(x)) operator
         self.diag_ordered = self.omega**2 * (
             1
-            - self.cheby_quad_obj.interp_to_2d_points(sample_points, q)[
-                self.cheby_quad_obj.idxes
+            - self.cheby_quad_interior.interp_to_2d_points(sample_points, q)[
+                self.cheby_quad_interior.idxes
             ]
         )
 
@@ -109,13 +156,13 @@ class LeafNode:
 
         # Interpolate from Gauss to Cheby with last row removed
         self.P_0 = lagrange_interpolation_matrix(
-            self.gauss_quad_obj.points, self.cheby_quad_obj.points_1d
+            self.quad_bdry.quad_obj.points, self.cheby_quad_interior.points_1d
         )[:-1]
         self.I_P_0 = torch.kron(torch.eye(4), self.P_0).to(torch.cfloat)
 
         # Interpolate from Cheby to Gauss
         self.Q = lagrange_interpolation_matrix(
-            self.cheby_quad_obj.points_1d, self.gauss_quad_obj.points
+            self.cheby_quad_interior.points_1d, self.quad_bdry.quad_obj.points
         )
         self.I_Q = torch.kron(torch.eye(4), self.Q).to(torch.cfloat)
 
@@ -138,17 +185,17 @@ class LeafNode:
         self.G.diagonal().copy_(G_diag_post)
 
         self.X = None
-        self.R = None
+        # self.R = None
 
-        self._dirs = ["S", "E", "N", "W"]
+        # self._dirs = ["S", "E", "N", "W"]
 
-        # This ordering comes from the first sentence of section 2.3 in GMB15
-        self.R_indices = {
-            "S": torch.arange(self.n_gauss_pts),
-            "E": torch.arange(self.n_gauss_pts, 2 * self.n_gauss_pts),
-            "N": torch.arange(2 * self.n_gauss_pts, 3 * self.n_gauss_pts),
-            "W": torch.arange(3 * self.n_gauss_pts, 4 * self.n_gauss_pts),
-        }
+        # # This ordering comes from the first sentence of section 2.3 in GMB15
+        # self.R_indices = {
+        #     "S": torch.arange(self.n_gauss_pts),
+        #     "E": torch.arange(self.n_gauss_pts, 2 * self.n_gauss_pts),
+        #     "N": torch.arange(2 * self.n_gauss_pts, 3 * self.n_gauss_pts),
+        #     "W": torch.arange(3 * self.n_gauss_pts, 4 * self.n_gauss_pts),
+        # }
 
     def solve(self) -> None:
         """Solves the linear system BX = [I; 0] for X. The RHS has size
@@ -177,35 +224,6 @@ class LeafNode:
             # print(a.shape)
             self.R = self.I_Q @ a
         return self.R
-
-    def get_R_submatrices(self, shared_side_key: str) -> torch.Tensor:
-        """Returns four submatrices of the R matrix. The R matrix maps incoming impedance data to outgoing impedance data.
-        To describe the submatrices, think about the indices tabulating the boundary points of two adjacent nodes, which we wish
-        to join. The indices start on the South edge and go around counter-clockwise.
-        The submatrices are:
-
-        R = (R_intint, R_intext
-             R_extint, R_extext)
-
-        The shared_side_key indicates which side of the node is shared with the adjacent node, and therefore which rows and cols are
-        included in the int/ext submatrices.
-        """
-        assert shared_side_key in self._dirs, f"idx_rows must be in {self._dirs}"
-
-        if self.R is None:
-            self.get_R()
-
-        int_idxes = self.R_indices[shared_side_key]
-        ext_indices = torch.cat(
-            [self.R_indices[dir] for dir in self._dirs if dir != shared_side_key]
-        )
-
-        R_intint = self.R[int_idxes][:, int_idxes]
-        R_intext = self.R[int_idxes][:, ext_indices]
-        R_extint = self.R[ext_indices][:, int_idxes]
-        R_extext = self.R[ext_indices][:, ext_indices]
-
-        return R_intint, R_intext, R_extint, R_extext
 
 
 def _get_opposite_boundary_str(bdry_str: str) -> str:
@@ -332,7 +350,7 @@ def build_interior_dtn_map(node: Node, eta: float) -> torch.Tensor:
     n_bdry_points = R.shape[0]
     prefactor = 1j * eta * -1
     I = torch.eye(n_bdry_points)
-    X = torch.linalg.solve(R - I)
+    X = torch.linalg.inv(R - I)
     DtN = prefactor * X @ (R + I)
 
     return DtN

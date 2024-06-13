@@ -6,6 +6,7 @@ following command from the project root directory.
 python -m pytest test/
 ```
 """
+
 import numpy as np
 import os
 import sys
@@ -73,7 +74,8 @@ def check_no_nan_in_array(arr: np.ndarray) -> None:
 
     s = f"Found NaNs in arr of shape {arr.shape}. Some of the points are at indices {nan_points.flatten()[:5]}"
 
-    assert not np.any(np.isnan(arr)), s
+    z = np.isnan(arr)
+    assert not np.any(z), s
 
 
 TEMP_SERIALIZE_DIR = "test/tmp/"

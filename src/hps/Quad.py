@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Tuple
 import torch
 import numpy as np
 from scipy.interpolate import LinearNDInterpolator
@@ -36,6 +36,166 @@ class GaussLegendre1D(Quad1D):
         points = spatial_domain_max * torch.from_numpy(points)
 
         super().__init__(spatial_domain_max, points, weights, n)
+
+
+class BoundaryQuad:
+    def __init__(
+        self,
+        corners: torch.Tensor,
+        points_S: torch.Tensor,
+        points_E: torch.Tensor,
+        points_N: torch.Tensor,
+        points_W: torch.Tensor,
+        weights_S: torch.Tensor,
+        weights_E: torch.Tensor,
+        weights_N: torch.Tensor,
+        weights_W: torch.Tensor,
+        quad_obj: GaussLegendre1D = None,
+    ) -> None:
+        self.corners = corners
+        self.points_dd = {
+            "S": points_S,
+            "E": points_E,
+            "N": points_N,
+            "W": points_W,
+        }
+        self.weights_dd = {
+            "S": weights_S,
+            "E": weights_E,
+            "N": weights_N,
+            "W": weights_W,
+        }
+        self._dirs = ["S", "E", "N", "W"]
+
+        self.n_points = [
+            points_S.shape[0],
+            points_E.shape[0],
+            points_N.shape[0],
+            points_W.shape[0],
+        ]
+        self.quad_obj = quad_obj
+
+    def get_submatrix_indices(
+        self, shared_side_key: str
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """The boundary points are ordered to start on the South edge, and then wrap around counter-clockwise. This function returns the indices of the boundary points that are shared
+        along the specified edge, and the indices of the boundary points that are not shared.
+        """
+        idxes = torch.arange(
+            self.n_points[0] + self.n_points[1] + self.n_points[2] + self.n_points[3]
+        )
+
+        if shared_side_key == "S":
+            shared_side_idxes = idxes[: self.n_points[0]]
+            non_shared_idxes = idxes[self.n_points[0] :]
+
+        elif shared_side_key == "E":
+            shared_side_idxes = idxes[
+                self.n_points[0] : self.n_points[0] + self.n_points[1]
+            ]
+            non_shared_idxes = torch.cat(
+                (
+                    idxes[: self.n_points[0]],
+                    idxes[self.n_points[0] + self.n_points[1] :],
+                )
+            )
+        elif shared_side_key == "N":
+            shared_side_idxes = idxes[
+                self.n_points[0]
+                + self.n_points[1] : self.n_points[0]
+                + self.n_points[1]
+                + self.n_points[2]
+            ]
+            non_shared_idxes = torch.cat(
+                (
+                    idxes[: self.n_points[0] + self.n_points[1]],
+                    idxes[self.n_points[0] + self.n_points[1] + self.n_points[2] :],
+                )
+            )
+        elif shared_side_key == "W":
+            shared_side_idxes = idxes[-self.n_points[3] :]
+            non_shared_idxes = idxes[: -self.n_points[3]]
+        else:
+            raise ValueError("shared_side_key must be one of ['S', 'E', 'N', 'W']")
+
+        return shared_side_idxes, non_shared_idxes
+
+    def merge(self, other: "BoundaryQuad", shared_side_key: str) -> "BoundaryQuad":
+        if shared_side_key == "S":
+            new_points_S = other.points_dd["S"]
+            new_weights_S = other.weights_dd["S"]
+
+            new_points_E = torch.cat((other.points_dd["E"], self.points_dd["E"]))
+            new_weights_E = torch.cat((other.weights_dd["E"], self.weights_dd["E"]))
+
+            new_points_N = self.points_dd["N"]
+            new_weights_N = self.weights_dd["N"]
+
+            new_points_W = torch.cat((self.points_dd["W"], other.points_dd["W"]))
+            new_weights_W = torch.cat((self.weights_dd["W"], other.weights_dd["W"]))
+
+        elif shared_side_key == "E":
+            pass
+        elif shared_side_key == "N":
+            pass
+        elif shared_side_key == "W":
+            pass
+        else:
+            raise ValueError("shared_side_key must be one of ['S', 'E', 'N', 'W']")
+
+    @classmethod
+    def from_corner_and_half_side_len(
+        cls, southwest_corner: torch.Tensor, half_side_len: float, n: int
+    ):
+        # First, define the four corners in an array of shape (4,2). The corners are ordered counter-clockwise starting from the SW corner.
+        corners = torch.zeros(4, 2)
+        corners[0] = southwest_corner
+        corners[1] = southwest_corner + torch.tensor(
+            [2 * half_side_len, 0.0]
+        )  # SE corner
+        corners[2] = southwest_corner + torch.tensor(
+            [2 * half_side_len, 2 * half_side_len]
+        )  # NE corner
+        corners[3] = southwest_corner + torch.tensor(
+            [0.0, 2 * half_side_len]
+        )  # NW corner
+
+        # Next, get a 1D Gauss-Legendre quadrature object
+        quad_1d = GaussLegendre1D(half_side_len, n)
+        quad_points = quad_1d.points + half_side_len  # points are from 0 to side_len
+        quad_weights = quad_1d.weights
+
+        # Now, create the points arrays for each of the four sides.
+
+        S_points = torch.zeros(n, 2)
+        S_points[:, 0] = corners[0, 0] + quad_points
+        S_points[:, 1] = corners[0, 1]
+
+        E_points = torch.zeros(n, 2)
+        E_points[:, 0] = corners[1, 0]
+        E_points[:, 1] = corners[1, 1] + quad_points
+
+        N_points = torch.zeros(n, 2)
+        N_points[:, 0] = corners[2, 0] - quad_points
+        N_points[:, 1] = corners[2, 1]
+
+        W_points = torch.zeros(n, 2)
+        W_points[:, 0] = corners[3, 0]
+        W_points[:, 1] = corners[3, 1] - quad_points
+
+        # initialize the object
+        return cls(
+            corners,
+            S_points,
+            E_points,
+            N_points,
+            W_points,
+            quad_weights,
+            quad_weights,
+            quad_weights,
+            quad_weights,
+            quad_obj=quad_1d,
+        )
 
 
 class Cheby2D:

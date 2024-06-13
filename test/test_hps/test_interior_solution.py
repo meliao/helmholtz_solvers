@@ -18,11 +18,11 @@ class Test_LeafNode:
         n = 12
         n_gauss = 13
         m = 15
-        upper_left_x = -0.5
-        upper_left_y = -0.5
+
+        sw_corner = torch.tensor([-0.5, -0.5])
         omega = 4.0
 
-        x = torch.linspace(upper_left_y, 2 * half_side_len + upper_left_y, m)
+        x = torch.linspace(-0.5, 2 * half_side_len + -0.5, m)
         X, Y = torch.meshgrid(x, x, indexing="ij")
 
         pts = torch.concatenate((X.unsqueeze(-1), Y.unsqueeze(-1)), axis=-1).reshape(
@@ -31,9 +31,7 @@ class Test_LeafNode:
 
         q = torch.randn(size=(m**2,))
 
-        leaf_obj = LeafNode(
-            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
-        )
+        leaf_obj = LeafNode(half_side_len, n, n_gauss, sw_corner, omega, q, pts)
         leaf_obj.solve()
 
         assert leaf_obj.X.shape == (n**2, 4 * n - 4)
@@ -66,6 +64,7 @@ class Test_LeafNode:
         m = 15
         upper_left_x = -0.5
         upper_left_y = -0.5
+        sw_corner = torch.tensor([upper_left_x, upper_left_y])
         omega = 4.0
 
         x = torch.linspace(upper_left_y, 2 * half_side_len + upper_left_y, m)
@@ -77,13 +76,11 @@ class Test_LeafNode:
 
         q = torch.randn(size=(m**2,))
 
-        leaf_obj = LeafNode(
-            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
-        )
+        leaf_obj = LeafNode(half_side_len, n, n_gauss, sw_corner, omega, q, pts)
 
-        f_evals = f(leaf_obj.cheby_quad_obj.points_lst).numpy()
-        f_x_evals = f_x(leaf_obj.cheby_quad_obj.points_lst).numpy()
-        f_y_evals = f_y(leaf_obj.cheby_quad_obj.points_lst).numpy()
+        f_evals = f(leaf_obj.cheby_quad_interior.points_lst).numpy()
+        f_x_evals = f_x(leaf_obj.cheby_quad_interior.points_lst).numpy()
+        f_y_evals = f_y(leaf_obj.cheby_quad_interior.points_lst).numpy()
 
         f_x_pred = leaf_obj.D_x @ f_evals
         f_x_pred = f_x_pred.numpy()
@@ -97,6 +94,9 @@ class Test_LeafNode:
         print(f_y_pred)
         check_arrays_close(f_y_evals, f_y_pred)
 
+    @pytest.mark.skip(
+        reason="LeafNode.R_indices is now handled by BoundaryQuad object."
+    )
     def test_2(self) -> None:
         """Checks the self.R_indices are set correctly"""
 
@@ -124,10 +124,10 @@ class Test_LeafNode:
         expected_indices = torch.arange(4 * n_gauss)
         all_indices = torch.cat(
             (
-                leaf_obj.R_indices["S"],
-                leaf_obj.R_indices["E"],
-                leaf_obj.R_indices["N"],
-                leaf_obj.R_indices["W"],
+                leaf_obj.quad_bdry.points_dd["S"],
+                leaf_obj.quad_bdry.points_dd["E"],
+                leaf_obj.quad_bdry.points_dd["N"],
+                leaf_obj.quad_bdry.points_dd["W"],
             )
         )
         print("all_indices shape: ", all_indices.shape)
@@ -163,6 +163,7 @@ class Test_LeafNode:
         m = 15
         upper_left_x = -0.5
         upper_left_y = -0.5
+        sw_corner = torch.tensor([upper_left_x, upper_left_y])
         omega = 4.0
 
         x = torch.linspace(upper_left_y, 2 * half_side_len + upper_left_y, m)
@@ -174,9 +175,7 @@ class Test_LeafNode:
 
         q = torch.randn(size=(m**2,))
 
-        leaf_obj = LeafNode(
-            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
-        )
+        leaf_obj = LeafNode(half_side_len, n, n_gauss, sw_corner, omega, q, pts)
 
         for i in ["S", "E", "N", "W"]:
             R_intint, R_intext, R_extint, R_extext = leaf_obj.get_R_submatrices(i)
@@ -196,6 +195,7 @@ class Test_Merge:
         m = 15
         upper_left_x = -0.5
         upper_left_y = -0.5
+        sw_corner = torch.tensor([upper_left_x, upper_left_y])
         omega = 4.0
 
         x = torch.linspace(upper_left_y, 2 * half_side_len + upper_left_y, m)
@@ -205,9 +205,7 @@ class Test_Merge:
             -1, 2
         )
         q = torch.randn(size=(m**2,))
-        leaf_obj = LeafNode(
-            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q, pts
-        )
+        leaf_obj = LeafNode(half_side_len, n, n_gauss, sw_corner, omega, q, pts)
         a_bdry_lst = ["S", "E", "N", "W"]
         b_bdry_lst = ["N", "W", "S", "E"]
         for a, b in zip(a_bdry_lst, b_bdry_lst):
@@ -224,6 +222,7 @@ class Test_Merge:
         m = 15
         upper_left_x = -0.5
         upper_left_y = -0.5
+        sw_corner = torch.tensor([upper_left_x, upper_left_y])
         omega = 4.0
 
         x = torch.linspace(upper_left_y, 2 * half_side_len + upper_left_y, m)
@@ -234,12 +233,8 @@ class Test_Merge:
         )
         q_a = torch.randn(size=(m**2,))
         q_b = torch.randn(size=(m**2,))
-        leaf_obj_a = LeafNode(
-            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q_a, pts
-        )
-        leaf_obj_b = LeafNode(
-            half_side_len, n, n_gauss, upper_left_x, upper_left_y, omega, q_b, pts
-        )
+        leaf_obj_a = LeafNode(half_side_len, n, n_gauss, sw_corner, omega, q_a, pts)
+        leaf_obj_b = LeafNode(half_side_len, n, n_gauss, sw_corner, omega, q_b, pts)
 
         dirs = ["N", "E", "S", "W"]
 
